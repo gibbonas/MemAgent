@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for production
+  postgres:
+    image: postgres:16-alpine
+    container_name: memagent-postgres
+    environment:
+      POSTGRES_USER: memagent
+      POSTGRES_PASSWORD: memagent_password_change_in_production
+      POSTGRES_DB: memagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memagent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for session storage (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: memagent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+
+# To use:
+# 1. Start services: docker-compose up -d
+# 2. Check status: docker-compose ps
+# 3. View logs: docker-compose logs -f
+# 4. Stop services: docker-compose down
+# 5. Remove data: docker-compose down -v
