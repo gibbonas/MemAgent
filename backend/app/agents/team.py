@@ -213,15 +213,24 @@ class MemoryTeam:
         user_message: str,
         user_id: str,
         session_id: str,
+        *,
+        token_tracker: TokenTracker,
+        google_photos_client: GooglePhotosClient,
         memory_id: Optional[str] = None
     ) -> Dict:
         """
         Process a memory through the full pipeline.
         
+        Request-scoped token_tracker and google_photos_client must be provided
+        by the caller (one per request) so the cached team never uses a closed
+        DB session or stale credentials.
+        
         Args:
             user_message: User's message/story
             user_id: User ID
             session_id: Session ID
+            token_tracker: Token tracker bound to the current request's DB session
+            google_photos_client: Google Photos client with current request's credentials
             memory_id: Optional memory ID for tracking
             
         Returns:
@@ -270,8 +279,8 @@ class MemoryTeam:
                 # Parse the response
                 parsed = parse_collected_memory(response_text)
                 
-                # Track token usage
-                await self.token_tracker.track_usage(
+                # Track token usage (use request-scoped tracker)
+                await token_tracker.track_usage(
                     user_id=user_id,
                     session_id=session_id,
                     agent_name="memory_collector",
@@ -298,7 +307,7 @@ class MemoryTeam:
                             "Add them below if you'd like, or say 'generate' when ready."
                         )
                         state.add_message("assistant", ref_message)
-                        return await self._start_picker_flow(user_id, session_id, state, memory_id, message=ref_message)
+                        return await self._start_picker_flow(user_id, session_id, state, google_photos_client, memory_id=memory_id, message=ref_message)
                     else:
                         # No people/pets mentioned, skip photo search
                         state.stage = "confirm_generation"
@@ -353,7 +362,7 @@ class MemoryTeam:
                     }
                 else:
                     # User wants to select reference photos via Picker API
-                    return await self._start_picker_flow(user_id, session_id, state, memory_id)
+                    return await self._start_picker_flow(user_id, session_id, state, google_photos_client, memory_id=memory_id)
             
             # Step 3: Handle photo selection response
             elif state.stage == "selecting_references":
@@ -363,9 +372,9 @@ class MemoryTeam:
                 ):
                     state.selected_reference_ids = []
                     state.selected_reference_urls = []
-                    return await self._process_screening(user_id, session_id, state, memory_id)
+                    return await self._process_screening(user_id, session_id, state, token_tracker, google_photos_client, memory_id)
                 # User ready to generate
-                return await self._process_screening(user_id, session_id, state, memory_id)
+                return await self._process_screening(user_id, session_id, state, token_tracker, google_photos_client, memory_id)
             
             # Step 4: Handle search_failed (user can retry or skip)
             elif state.stage == "search_failed":
@@ -380,7 +389,7 @@ class MemoryTeam:
                         "stage": "confirm_generation"
                     }
                 # Retry Picker (yes, search, try again, etc.)
-                return await self._start_picker_flow(user_id, session_id, state, memory_id)
+                return await self._start_picker_flow(user_id, session_id, state, google_photos_client, memory_id=memory_id)
             
             # Step 5: Handle generation confirmation
             elif state.stage == "confirm_generation":
@@ -388,7 +397,7 @@ class MemoryTeam:
                 
                 if any(word in user_intent for word in ['yes', 'generate', 'create', 'go', 'proceed']):
                     # User confirmed - proceed to screening and generation
-                    return await self._process_screening(user_id, session_id, state, memory_id)
+                    return await self._process_screening(user_id, session_id, state, token_tracker, google_photos_client, memory_id)
                 elif self._user_wants_change_references(user_message):
                     # Go back to choose different reference photos
                     state.selected_reference_ids = []
@@ -421,7 +430,8 @@ class MemoryTeam:
                     state.selected_reference_urls = []
                     if state.extraction and (state.extraction.who_people or state.extraction.who_pets):
                         return await self._start_picker_flow(
-                            user_id, session_id, state, memory_id,
+                            user_id, session_id, state, google_photos_client,
+                            memory_id=memory_id,
                             message="Here are your reference photos. Add any context below, then click Generate when ready."
                         )
                     state.stage = "confirm_generation"
@@ -475,16 +485,18 @@ class MemoryTeam:
         user_id: str,
         session_id: str,
         state: ConversationState,
+        google_photos_client: GooglePhotosClient,
         memory_id: Optional[str] = None,
         message: Optional[str] = None
     ) -> Dict:
         """
         Start Google Photos Picker flow: create a session and return picker_uri for the user.
         Frontend opens the URI, user selects photos, then polls and submits via references/select.
+        Uses request-scoped google_photos_client for current credentials.
         """
         try:
             logger.info("pipeline_stage", stage="picker_session", session_id=session_id)
-            picker = GooglePhotosPickerClient(self.google_photos_client.credentials)
+            picker = GooglePhotosPickerClient(google_photos_client.credentials)
             session = picker.create_session(max_items=8)
             picker_uri = (session.get("pickerUri") or "").rstrip("/") + "/autoclose"
             state.stage = "selecting_references"
@@ -563,10 +575,15 @@ class MemoryTeam:
         self,
         user_id: str,
         session_id: str,
+        *,
+        token_tracker: TokenTracker,
+        google_photos_client: GooglePhotosClient,
         memory_id: Optional[str] = None,
         photo_context: Optional[str] = None
     ) -> Dict:
-        """Run screening and generation using already-stored reference selection."""
+        """Run screening and generation using already-stored reference selection.
+        Request-scoped token_tracker and google_photos_client must be provided by the caller.
+        """
         state = self.get_session_state(session_id)
         if state.stage != "ready_to_generate":
             return {
@@ -576,22 +593,29 @@ class MemoryTeam:
             }
         state.photo_context = (photo_context or "").strip() or None
         state.stage = "screening"
-        return await self._process_screening(user_id, session_id, state, memory_id)
+        return await self._process_screening(user_id, session_id, state, token_tracker, google_photos_client, memory_id)
 
     async def confirm_reference_selection(
         self,
         session_id: str,
         user_id: str,
         selected_photo_ids: List[str],
+        *,
+        token_tracker: TokenTracker,
+        google_photos_client: GooglePhotosClient,
         reference_photo_urls: Optional[List[str]] = None
     ) -> Dict:
         """
         Process user's reference photo selection and continue to screening.
         
+        Request-scoped token_tracker and google_photos_client must be provided by the caller.
+        
         Args:
             session_id: Session ID
             user_id: User ID
             selected_photo_ids: List of selected photo IDs (from Picker or legacy)
+            token_tracker: Token tracker bound to the current request's DB session
+            google_photos_client: Google Photos client with current request's credentials
             reference_photo_urls: Optional list of image URLs for generation (from Picker)
         """
         try:
@@ -614,8 +638,8 @@ class MemoryTeam:
                 selected_count=len(selected_photo_ids)
             )
             
-            # Continue to screening
-            return await self._process_screening(user_id, session_id, state, None)
+            # Continue to screening (use request-scoped tracker and client)
+            return await self._process_screening(user_id, session_id, state, token_tracker, google_photos_client, None)
             
         except Exception as e:
             logger.error("confirm_reference_selection_error", error=str(e), session_id=session_id)
@@ -630,19 +654,13 @@ class MemoryTeam:
         user_id: str,
         session_id: str,
         state: ConversationState,
+        token_tracker: TokenTracker,
+        google_photos_client: GooglePhotosClient,
         memory_id: Optional[str] = None
     ) -> Dict:
         """
         Process content screening stage.
-        
-        Args:
-            user_id: User ID
-            session_id: Session ID
-            state: Conversation state
-            memory_id: Optional memory ID
-            
-        Returns:
-            Dict with result status
+        Uses request-scoped token_tracker and google_photos_client.
         """
         try:
             logger.info("pipeline_stage", stage="screening", session_id=session_id)
@@ -651,8 +669,8 @@ class MemoryTeam:
             screening_prompt = f"Review this memory for content policy: {state.extraction.what_happened}"
             screening_response = self.content_screener.run(screening_prompt)
             
-            # Track tokens
-            await self.token_tracker.track_usage(
+            # Track tokens (use request-scoped tracker)
+            await token_tracker.track_usage(
                 user_id=user_id,
                 session_id=session_id,
                 agent_name="content_screener",
@@ -665,7 +683,7 @@ class MemoryTeam:
             state.stage = "generating"
             
             # Move to image generation
-            return await self._process_generation(user_id, session_id, state, memory_id)
+            return await self._process_generation(user_id, session_id, state, token_tracker, google_photos_client, memory_id)
             
         except Exception as e:
             logger.error("screening_error", error=str(e), session_id=session_id)
@@ -680,19 +698,13 @@ class MemoryTeam:
         user_id: str,
         session_id: str,
         state: ConversationState,
+        token_tracker: TokenTracker,
+        google_photos_client: GooglePhotosClient,
         memory_id: Optional[str] = None
     ) -> Dict:
         """
         Process image generation stage.
-        
-        Args:
-            user_id: User ID
-            session_id: Session ID
-            state: Conversation state
-            memory_id: Optional memory ID
-            
-        Returns:
-            Dict with result status and image info
+        Uses request-scoped token_tracker and google_photos_client.
         """
         try:
             logger.info("pipeline_stage", stage="generating", session_id=session_id)
@@ -717,10 +729,10 @@ High quality, detailed, realistic lighting."""
             if state.photo_context:
                 generation_prompt += f"\n\nUser notes about the reference photos: {state.photo_context}"
             
-            # Fetch reference image bytes (Picker baseUrl needs OAuth + dimension params)
+            # Fetch reference image bytes (Picker baseUrl needs OAuth + dimension params; use request-scoped client)
             reference_image_bytes: Optional[List[bytes]] = None
             if state.selected_reference_urls:
-                creds = self.google_photos_client.credentials
+                creds = google_photos_client.credentials
                 if creds.expired and creds.refresh_token:
                     creds.refresh(Request())
                 token = creds.token
@@ -749,8 +761,8 @@ High quality, detailed, realistic lighting."""
                 reference_image_bytes=reference_image_bytes
             )
             
-            # Track tokens (includes generation cost)
-            await self.token_tracker.track_usage(
+            # Track tokens (use request-scoped tracker)
+            await token_tracker.track_usage(
                 user_id=user_id,
                 session_id=session_id,
                 agent_name="image_generator",

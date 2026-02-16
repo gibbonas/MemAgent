@@ -7,6 +7,7 @@ Endpoints for photo suggestions, Picker API (reference photo selection), and mem
 from typing import List
 import os
 import re
+import uuid as uuid_lib
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from fastapi.responses import FileResponse
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.monitoring import logger
 from app.core.security import OAuthManager
+from app.core.token_tracker import TokenTracker
 from app.deps import get_db
 from app.schemas.photo import PhotoSuggestion
 from app.storage.models import Memory
@@ -311,9 +313,13 @@ async def list_memories(
     List user's saved memories.
     """
     try:
+        try:
+            user_uuid = uuid_lib.UUID(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid user_id")
         result = await db.execute(
             select(Memory)
-            .where(Memory.user_id == user_id)
+            .where(Memory.user_id == user_uuid)
             .order_by(Memory.created_at.desc())
             .limit(limit)
             .offset(offset)
@@ -392,11 +398,13 @@ async def select_reference_photos(
         from app.agents.team import create_memory_team
         team = create_memory_team(google_photos_client, token_tracker)
         
-        # Process the reference selection
+        # Process the reference selection (pass request-scoped tracker and client)
         result = await team.confirm_reference_selection(
-            session_id=session_id,
-            user_id=user_id,
-            selected_photo_ids=selected_photo_ids
+            session_id,
+            user_id,
+            selected_photo_ids,
+            token_tracker=token_tracker,
+            google_photos_client=google_photos_client,
         )
         
         # Build response similar to chat message response

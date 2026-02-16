@@ -67,14 +67,18 @@ async def send_message(
         # Get or create session ID
         session_id = request.session_id or f"session_{user_id}_{int(__import__('time').time())}"
         
-        # Process message through team (with retry on 503/429)
+        # Process message through team (with retry on 503/429).
+        # Pass request-scoped token_tracker and google_photos_client so the cached team
+        # never uses a closed DB session or stale credentials.
         last_error = None
         for attempt in range(MAX_LLM_RETRIES):
             try:
                 result = await team.process_memory(
-                    user_message=request.message,
-                    user_id=user_id,
-                    session_id=session_id
+                    request.message,
+                    user_id,
+                    session_id,
+                    token_tracker=token_tracker,
+                    google_photos_client=google_photos_client,
                 )
                 break
             except HTTPException:
@@ -309,11 +313,15 @@ async def generate_from_references(
         if user_id not in _team_cache:
             raise HTTPException(status_code=400, detail="No active session found. Please start over.")
         team = _team_cache[user_id]
+        token_tracker = TokenTracker(db)
+        google_photos_client = GooglePhotosClient(credentials)
         photo_context = body.additional_context if body else None
         result = await team.run_generation_from_stored_refs(
-            user_id=user_id,
-            session_id=session_id,
-            photo_context=photo_context
+            user_id,
+            session_id,
+            token_tracker=token_tracker,
+            google_photos_client=google_photos_client,
+            photo_context=photo_context,
         )
         metadata = {"stage": result.get("stage")}
         state = team.get_session_state(session_id)
@@ -375,10 +383,12 @@ async def select_reference_photos(
         team = _team_cache[user_id]
         
         result = await team.confirm_reference_selection(
-            session_id=session_id,
-            user_id=user_id,
-            selected_photo_ids=body.selected_photo_ids,
-            reference_photo_urls=body.reference_photo_urls
+            session_id,
+            user_id,
+            body.selected_photo_ids,
+            token_tracker=token_tracker,
+            google_photos_client=google_photos_client,
+            reference_photo_urls=body.reference_photo_urls,
         )
         
         # Build metadata
