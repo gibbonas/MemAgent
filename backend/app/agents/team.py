@@ -152,9 +152,15 @@ class MemoryTeam:
         phrases = (
             "change photos", "different photos", "pick different",
             "choose different", "other photos", "change references",
-            "go back to photos", "select again",
+            "change reference", "change my reference", "change the reference",
+            "go back to photos", "select again", "re-select", "reselect",
+            "pick again", "choose again", "new reference", "different reference",
         )
-        return any(p in lower for p in phrases)
+        if any(p in lower for p in phrases):
+            return True
+        if ("change" in lower or "different" in lower) and ("reference" in lower or "photo" in lower):
+            return True
+        return False
 
     @staticmethod
     def _user_wants_add_references(message: str) -> bool:
@@ -409,19 +415,17 @@ class MemoryTeam:
             
             # Step 6: After image is generated - user can edit, add/change refs, change story, or restart
             elif state.stage == "completed":
-                # Add or change reference photos, then regenerate
+                # Add or change reference photos - go straight to picker
                 if self._user_wants_add_references(user_message) or self._user_wants_change_references(user_message):
                     state.selected_reference_ids = []
                     state.selected_reference_urls = []
                     if state.extraction and (state.extraction.who_people or state.extraction.who_pets):
-                        # Go straight to picker if they said yes/search; otherwise ask
-                        if any(w in user_message.lower() for w in ["yes", "search", "pick", "add"]):
-                            return await self._start_picker_flow(user_id, session_id, state, memory_id)
-                        state.stage = "ready_for_search"
-                        message = "Would you like to pick reference photos for a new generation? Say 'yes' or 'search' to open Google Photos, or 'skip' to regenerate without references."
-                    else:
-                        state.stage = "confirm_generation"
-                        message = "Ready to regenerate your memory image?"
+                        return await self._start_picker_flow(
+                            user_id, session_id, state, memory_id,
+                            message="Here are your reference photos. Add any context below, then click Generate when ready."
+                        )
+                    state.stage = "confirm_generation"
+                    message = "Ready to regenerate your memory image?"
                     state.add_message("assistant", message)
                     return {
                         "status": "ready",

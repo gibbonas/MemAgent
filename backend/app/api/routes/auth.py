@@ -43,6 +43,18 @@ async def google_auth():
     return RedirectResponse(url=auth_url)
 
 
+@router.get("/google/photos")
+async def google_photos_auth(
+    user_id: str = Query(None),
+    return_path: str = Query("/"),
+):
+    """
+    Initiate Google OAuth flow for Photos (reconnect flow).
+    Same as /google - used when "Connect Google Photos" is clicked for re-auth.
+    """
+    return await google_auth()
+
+
 @router.get("/callback")
 async def google_callback(
     code: str = Query(...),
