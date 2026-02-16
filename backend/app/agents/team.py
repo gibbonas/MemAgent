@@ -541,9 +541,23 @@ class MemoryTeam:
         """
         Store reference photo selection and return reference_photos for display.
         Does NOT run generation - call process_screening after to generate.
+        Idempotent: if already in ready_to_generate (race from concurrent poll+visibility),
+        return success with existing refs.
         """
         try:
             state = self.get_session_state(session_id)
+            if state.stage == "ready_to_generate":
+                # Already stored (e.g. race from concurrent poll + visibility) - return success
+                refs = [
+                    {"media_item_id": state.selected_reference_ids[i] if i < len(state.selected_reference_ids) else str(i), "index": i}
+                    for i in range(len(state.selected_reference_urls))
+                ]
+                return {
+                    "status": "ready",
+                    "message": "Here are your reference photos. Add any context about them below, then click Generate when ready.",
+                    "stage": "ready_to_generate",
+                    "reference_photos": refs,
+                }
             if state.stage != "selecting_references":
                 return {
                     "status": "error",

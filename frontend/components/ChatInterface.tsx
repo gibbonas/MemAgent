@@ -61,6 +61,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   const [photoContext, setPhotoContext] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const processedPickerSessionsRef = useRef<Set<string>>(new Set())
+  const processingPickerSessionRef = useRef<string | null>(null)
 
   useEffect(() => {
     initializeSession()
@@ -82,19 +83,39 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     const start = Date.now()
     const poll = async () => {
       if (Date.now() - start > timeoutMs) return
+      if (processingPickerSessionRef.current === pickerSessionId) return
       try {
         const session = await getPickerSession(userId, pickerSessionId)
         if (session.media_items_set) {
+          if (processingPickerSessionRef.current === pickerSessionId) return
+          processingPickerSessionRef.current = pickerSessionId
           processedPickerSessionsRef.current.add(pickerSessionId)
-          handlePickerFinished(pickerSessionId)
+          try {
+            await handlePickerFinished(pickerSessionId)
+          } finally {
+            processingPickerSessionRef.current = null
+          }
         }
       } catch {
+        processingPickerSessionRef.current = null
         // Ignore poll errors
       }
     }
     const id = setInterval(poll, pollIntervalMs)
     poll()
-    return () => clearInterval(id)
+
+    // Poll immediately when user returns to tab (picker opens in another tab/window; background tabs throttle setInterval)
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        poll()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [messages, userId, sessionId, loading])
 
   const scrollToBottom = () => {
