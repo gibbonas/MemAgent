@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Camera, LogOut, User } from 'lucide-react'
 import ChatInterface from '@/components/ChatInterface'
 import AuthButton from '@/components/AuthButton'
@@ -10,6 +11,20 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [photosConnectedMessage, setPhotosConnectedMessage] = useState(false)
+  const searchParams = useSearchParams()
+
+  useEffect(() => {
+    const connected = searchParams.get('photos_connected')
+    if (connected === '1' && typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('photos_connected')
+      window.history.replaceState({}, '', url.pathname + url.search)
+      setPhotosConnectedMessage(true)
+      const t = setTimeout(() => setPhotosConnectedMessage(false), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [searchParams])
 
   useEffect(() => {
     // Add a small delay to ensure localStorage is ready
@@ -146,7 +161,14 @@ export default function Home() {
             </div>
           </div>
         ) : (
-          <ChatInterface userId={userId!} />
+          <>
+            {photosConnectedMessage && (
+              <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-2 text-sm text-green-800">
+                Google Photos connected. You can now choose reference photos when prompted.
+              </div>
+            )}
+            <ChatInterface userId={userId!} />
+          </>
         )}
       </div>
     </main>

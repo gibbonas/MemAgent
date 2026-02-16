@@ -167,13 +167,14 @@ class GeminiImageGenerator:
             with open(image_path, "rb") as f:
                 image_bytes = f.read()
             mime = "image/png" if image_bytes[:8].startswith(b"\x89PNG") else "image/jpeg"
+            # Put instruction first so model understands the task before seeing the image
             prompt = (
-                f"Apply these changes to the image. Keep the rest of the scene and people the same. "
-                f"User requested: {edit_instruction}"
+                f"Edit this image: {edit_instruction}\n\n"
+                f"Output the modified image. Keep everything else the same unless the edit explicitly changes it."
             )
             parts = [
-                types.Part(inline_data=types.Blob(data=image_bytes, mime_type=mime)),
                 types.Part(text=prompt),
+                types.Part(inline_data=types.Blob(data=image_bytes, mime_type=mime)),
             ]
             config = types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
             timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")

@@ -68,9 +68,7 @@ async def create_picker_session(
         logger.warning("picker_unauthorized", error=str(e), user_id=user_id)
         raise HTTPException(
             status_code=401,
-            detail="Photo picker access was denied. Please sign out and sign in again to grant "
-            "photo selection permission. If you manage this app, ensure the Google Photos "
-            "Picker API is enabled in Google Cloud Console.",
+            detail="Google Photos is not connected. Connect Google Photos in the chat to select reference photos.",
         )
     except Exception as e:
         logger.error("picker_create_session_error", error=str(e), user_id=user_id)

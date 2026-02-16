@@ -10,7 +10,7 @@ from agno.models.google import Gemini
 from app.config import settings
 
 
-def get_gemini_model(model_name: str = "gemini-3-flash-preview") -> Gemini:
+def get_gemini_model(model_name: str = "gemini-2.5-flash") -> Gemini:
     """
     Get configured Gemini model instance.
     

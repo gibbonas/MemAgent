@@ -4,6 +4,11 @@
 
 The memory creation process includes an interactive, multi-step flow where users provide their story, optionally select reference photos, confirm, and then generate the image. Each step happens in a **separate request** to avoid timeouts.
 
+### Login vs Google Photos connection
+
+- **App login** uses Google sign-in for **identity only** (openid, email, profile). It does **not** request access to Google Photos.
+- **Google Photos** is connected **in the workflow** when the user is asked for reference photos. If the user chooses "picker" or "search" and has not yet connected Photos, the UI shows a **Connect Google Photos** button. After completing that OAuth step, the user can open the photo picker and select reference photos. This keeps initial login minimal and connects Photos only when needed.
+
 ## Flow Stages
 
 ### 1. **Collection** (`collecting`)
@@ -168,21 +173,14 @@ if (message.metadata?.stage === 'selecting_references' &&
 - Continues without reference photos
 - Doesn't block memory creation
 
-**If user has 403 PERMISSION_DENIED:**
-- Need to re-authenticate with proper Google Photos scopes
-- User should log out and log back in
+**If user has not connected Google Photos (403/401):**
+- The backend returns `requires_reauth: true` in message metadata
+- The UI shows a **Connect Google Photos** button; the user completes the Photos OAuth flow and is redirected back, then can retry the picker
 
-## Google Photos Scopes Required
+## Google Photos scopes
 
-```python
-SCOPES = [
-    'https://www.googleapis.com/auth/photoslibrary.readonly',  # Read photos
-    'https://www.googleapis.com/auth/photoslibrary.appendonly', # Upload photos
-    'openid',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile'
-]
-```
+- **Login** (app-only): `openid`, `userinfo.email`, `userinfo.profile`
+- **Connect Google Photos** (workflow): additionally `photospicker.mediaitems.readonly`, `photoslibrary.appendonly`, `photoslibrary.readonly.appcreateddata`
 
 ## Example Conversation Flow
 

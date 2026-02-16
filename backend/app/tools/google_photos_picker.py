@@ -20,7 +20,7 @@ PICKER_BASE = "https://photospicker.googleapis.com/v1"
 class PickerUnauthorizedError(Exception):
     """
     Raised when the Picker API returns 401.
-    Usually means the token is missing the Picker scope—user must sign out and sign in again,
+    Usually means the token is missing the Picker scope—user should connect Google Photos in the workflow,
     or the Google Photos Picker API is not enabled in Cloud Console.
     """
     pass

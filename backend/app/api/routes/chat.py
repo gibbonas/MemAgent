@@ -7,7 +7,9 @@ Endpoints for chat interaction with memory agents.
 import asyncio
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import httpx
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.team import MemoryTeam, create_memory_team
@@ -16,7 +18,7 @@ from app.core.monitoring import logger
 from app.core.security import OAuthManager
 from app.core.token_tracker import TokenTracker
 from app.deps import get_db
-from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ReferenceSelectionBody
+from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ReferenceSelectionBody, GenerateFromReferencesBody
 from app.tools.google_photos import GooglePhotosClient
 
 # Retry config for transient LLM errors (503, 429)
@@ -112,9 +114,10 @@ async def send_message(
         # Add image info if available - convert local path to backend URL with user_id for auth
         if result.get("image_path"):
             import os
+            import time
             filename = os.path.basename(result.get("image_path"))
-            # Create URL to backend image serving endpoint with user_id query param for authentication
-            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}"
+            # Add cache-busting so browser fetches updated image after edits (filename has timestamp; extra safety)
+            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
         
         # Add Google Photos URL if available
         if result.get("google_photos_url"):
@@ -180,6 +183,172 @@ async def create_session(
     }
 
 
+@router.get("/reference-thumbnail")
+async def get_reference_thumbnail(
+    user_id: str = Query(...),
+    session_id: str = Query(...),
+    index: int = Query(..., ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Proxy Google Photos reference thumbnail. Fetches with user's OAuth and returns image bytes.
+    Used for displaying reference photo thumbnails (Google baseUrl requires auth).
+    """
+    try:
+        if user_id not in _team_cache:
+            raise HTTPException(status_code=404, detail="Session not found")
+        team = _team_cache[user_id]
+        state = team.get_session_state(session_id)
+        urls = state.selected_reference_urls or []
+        if index >= len(urls):
+            raise HTTPException(status_code=404, detail="Reference photo not found")
+        url = urls[index]
+        # Append dimension for thumbnail if not present
+        fetch_url = url if "=" in url else f"{url.rstrip('/')}=w200-h200"
+        credentials = await oauth_manager.get_credentials(user_id, db)
+        if not credentials:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        token = credentials.token
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                fetch_url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        r.raise_for_status()
+        content_type = r.headers.get("content-type", "image/jpeg")
+        return Response(content=r.content, media_type=content_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("reference_thumbnail_proxy_failed", error=str(e), index=index)
+        raise HTTPException(status_code=500, detail="Failed to load thumbnail")
+
+
+async def _fetch_thumbnail_as_data_url(url: str, token: str) -> Optional[str]:
+    """Fetch image from Google Photos URL and return as data URL for inline display."""
+    try:
+        fetch_url = url if "=" in url else f"{url.rstrip('/')}=w200-h200"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(fetch_url, headers={"Authorization": f"Bearer {token}"})
+        r.raise_for_status()
+        ct = r.headers.get("content-type", "image/jpeg")
+        import base64
+        b64 = base64.b64encode(r.content).decode("utf-8")
+        return f"data:{ct};base64,{b64}"
+    except Exception:
+        return None
+
+
+@router.post("/references/store")
+async def store_reference_photos(
+    body: ReferenceSelectionBody,
+    session_id: str = Query(...),
+    user_id: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Store reference photo selection and return reference_photos for display.
+    Call /references/generate next to run generation.
+    """
+    try:
+        credentials = await oauth_manager.get_credentials(user_id, db)
+        if not credentials:
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        if user_id not in _team_cache:
+            raise HTTPException(status_code=400, detail="No active session found. Please start over.")
+        team = _team_cache[user_id]
+        result = await team.store_reference_selection(
+            session_id=session_id,
+            user_id=user_id,
+            selected_photo_ids=body.selected_photo_ids,
+            reference_photo_urls=body.reference_photo_urls
+        )
+        if result.get("status") == "error":
+            return ChatMessageResponse(
+                message=result.get("message", "Error"),
+                session_id=session_id,
+                status="error",
+                metadata={"stage": result.get("stage")}
+            )
+        refs = result.get("reference_photos", [])
+        urls = body.reference_photo_urls or []
+        token = credentials.token
+        for i, ref in enumerate(refs):
+            if i < len(urls):
+                data_url = await _fetch_thumbnail_as_data_url(urls[i], token)
+                if data_url:
+                    ref["thumbnail_data_url"] = data_url
+        return ChatMessageResponse(
+            message=result.get("message", ""),
+            session_id=session_id,
+            status=result.get("status", "success"),
+            metadata={
+                "stage": result.get("stage"),
+                "reference_photos": refs,
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("store_reference_photos_error", error=str(e), user_id=user_id)
+        raise HTTPException(status_code=500, detail=parse_llm_error(e))
+
+
+@router.post("/references/generate")
+async def generate_from_references(
+    body: Optional[GenerateFromReferencesBody] = Body(default=None),
+    session_id: str = Query(...),
+    user_id: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Run screening and generation using stored reference selection."""
+    try:
+        credentials = await oauth_manager.get_credentials(user_id, db)
+        if not credentials:
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        if user_id not in _team_cache:
+            raise HTTPException(status_code=400, detail="No active session found. Please start over.")
+        team = _team_cache[user_id]
+        photo_context = body.additional_context if body else None
+        result = await team.run_generation_from_stored_refs(
+            user_id=user_id,
+            session_id=session_id,
+            photo_context=photo_context
+        )
+        metadata = {"stage": result.get("stage")}
+        state = team.get_session_state(session_id)
+        ref_urls = state.selected_reference_urls or []
+        if ref_urls:
+            refs = [{"media_item_id": str(i), "index": i} for i in range(len(ref_urls))]
+            token = credentials.token
+            for i, ref in enumerate(refs):
+                if i < len(ref_urls):
+                    data_url = await _fetch_thumbnail_as_data_url(ref_urls[i], token)
+                    if data_url:
+                        ref["thumbnail_data_url"] = data_url
+            metadata["reference_photos"] = refs
+        if result.get("image_path"):
+            import os
+            import time
+            filename = os.path.basename(result.get("image_path"))
+            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
+        if result.get("google_photos_url"):
+            metadata["google_photos_url"] = result.get("google_photos_url")
+        if result.get("extraction"):
+            metadata["extraction"] = result.get("extraction")
+        return ChatMessageResponse(
+            message=result.get("message", ""),
+            session_id=session_id,
+            status=result.get("status", "success"),
+            metadata=metadata
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("generate_from_references_error", error=str(e), user_id=user_id)
+        raise HTTPException(status_code=500, detail=parse_llm_error(e))
+
+
 @router.post("/references/select")
 async def select_reference_photos(
     body: ReferenceSelectionBody,
@@ -217,10 +386,24 @@ async def select_reference_photos(
             "stage": result.get("stage")
         }
         
+        # Add reference photos for thumbnail display (proxy URL uses index)
+        state = team.get_session_state(session_id)
+        ref_urls = state.selected_reference_urls or []
+        ref_ids = state.selected_reference_ids or []
+        if ref_urls:
+            metadata["reference_photos"] = [
+                {
+                    "media_item_id": ref_ids[i] if i < len(ref_ids) else str(i),
+                    "index": i,
+                }
+                for i in range(len(ref_urls))
+            ]
+        
         if result.get("image_path"):
             import os
+            import time
             filename = os.path.basename(result.get("image_path"))
-            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}"
+            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
         
         if result.get("google_photos_url"):
             metadata["google_photos_url"] = result.get("google_photos_url")

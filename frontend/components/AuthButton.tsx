@@ -20,7 +20,7 @@ export default function AuthButton({ onAuthSuccess }: AuthButtonProps) {
       className="w-full flex items-center justify-center space-x-3 px-6 py-3 bg-white border-2 border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 hover:border-gray-400 transition-all shadow-sm hover:shadow"
     >
       <Chrome className="h-5 w-5" />
-      <span>Continue with Google Photos</span>
+      <span>Continue with Google</span>
     </button>
   )
 }

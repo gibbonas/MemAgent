@@ -49,6 +49,7 @@ class ConversationState:
         self.reference_photos = []
         self.selected_reference_ids = []
         self.selected_reference_urls: List[str] = []  # URLs from Picker for image generation
+        self.photo_context: Optional[str] = None  # Optional context user adds about reference photos
         self.last_generated_image_path: Optional[str] = None  # For edit flow and save
     
     def add_message(self, role: str, content: str):
@@ -63,6 +64,7 @@ class ConversationState:
         self.reference_photos = []
         self.selected_reference_ids = []
         self.selected_reference_urls = []
+        self.photo_context = None
         self.last_generated_image_path = None
     
     def get_conversation_context(self) -> str:
@@ -151,6 +153,16 @@ class MemoryTeam:
             "change photos", "different photos", "pick different",
             "choose different", "other photos", "change references",
             "go back to photos", "select again",
+        )
+        return any(p in lower for p in phrases)
+
+    @staticmethod
+    def _user_wants_add_references(message: str) -> bool:
+        """True if the user wants to add reference photos for regeneration."""
+        lower = message.lower().strip()
+        phrases = (
+            "add photos", "add references", "use reference photos", "add reference",
+            "pick photos", "select photos", "search photos", "yes", "search",
         )
         return any(p in lower for p in phrases)
     
@@ -272,23 +284,26 @@ class MemoryTeam:
                     # Build confirmation message with memory details
                     confirmation = parsed.get("confirmation_message", "Great! I have all the details.")
                     
-                    # Prompt user about reference photos
+                    # Offer reference photos (optional) - provide the option immediately
                     has_people_or_pets = bool(state.extraction.who_people or state.extraction.who_pets)
                     if has_people_or_pets:
-                        message = f"{confirmation}\n\nWould you like me to search your Google Photos for reference images? This can help make the generated image more accurate. (Just say 'yes' or 'search' to proceed, or 'skip' to generate without references)"
+                        ref_message = (
+                            f"{confirmation}\n\nReference photos from Google Photos can help match people and pets in your memory. "
+                            "Add them below if you'd like, or say 'generate' when ready."
+                        )
+                        state.add_message("assistant", ref_message)
+                        return await self._start_picker_flow(user_id, session_id, state, memory_id, message=ref_message)
                     else:
                         # No people/pets mentioned, skip photo search
                         state.stage = "confirm_generation"
                         message = f"{confirmation}\n\nReady to generate your memory? (Say 'yes' or 'generate' to continue)"
-                    
-                    state.add_message("assistant", message)
-                    
-                    return {
-                        "status": "ready",
-                        "message": message,
-                        "stage": state.stage,
-                        "extraction": state.extraction.dict()
-                    }
+                        state.add_message("assistant", message)
+                        return {
+                            "status": "ready",
+                            "message": message,
+                            "stage": state.stage,
+                            "extraction": state.extraction.dict()
+                        }
                     
                 else:
                     # Still collecting - return conversational response
@@ -336,28 +351,15 @@ class MemoryTeam:
             
             # Step 3: Handle photo selection response
             elif state.stage == "selecting_references":
-                # Go back: cancel reference selection and choose again or skip
+                # Cancel: generate without references
                 if self._user_wants_go_back(user_message) or any(
                     w in user_message.lower() for w in ["cancel", "never mind", "skip"]
                 ):
-                    state.stage = "ready_for_search"
-                    message = "No problem. Would you like to search for reference photos again, or say 'skip' to generate without them?"
-                    state.add_message("assistant", message)
-                    return {
-                        "status": "ready_for_search",
-                        "message": message,
-                        "stage": "ready_for_search",
-                    }
-                # User sent text instead of using Picker; treat as ready to generate (or they'll use /references/select)
-                state.stage = "confirm_generation"
-                message = "Ready to generate your memory? (You can also pick reference photos via Google Photos, then click \"I've finished selecting.\")"
-                state.add_message("assistant", message)
-                
-                return {
-                    "status": "ready",
-                    "message": message,
-                    "stage": "confirm_generation"
-                }
+                    state.selected_reference_ids = []
+                    state.selected_reference_urls = []
+                    return await self._process_screening(user_id, session_id, state, memory_id)
+                # User ready to generate
+                return await self._process_screening(user_id, session_id, state, memory_id)
             
             # Step 4: Handle search_failed (user can retry or skip)
             elif state.stage == "search_failed":
@@ -405,8 +407,40 @@ class MemoryTeam:
                         "stage": "collecting"
                     }
             
-            # Step 6: After image is generated - user can ask for changes
+            # Step 6: After image is generated - user can edit, add/change refs, change story, or restart
             elif state.stage == "completed":
+                # Add or change reference photos, then regenerate
+                if self._user_wants_add_references(user_message) or self._user_wants_change_references(user_message):
+                    state.selected_reference_ids = []
+                    state.selected_reference_urls = []
+                    if state.extraction and (state.extraction.who_people or state.extraction.who_pets):
+                        # Go straight to picker if they said yes/search; otherwise ask
+                        if any(w in user_message.lower() for w in ["yes", "search", "pick", "add"]):
+                            return await self._start_picker_flow(user_id, session_id, state, memory_id)
+                        state.stage = "ready_for_search"
+                        message = "Would you like to pick reference photos for a new generation? Say 'yes' or 'search' to open Google Photos, or 'skip' to regenerate without references."
+                    else:
+                        state.stage = "confirm_generation"
+                        message = "Ready to regenerate your memory image?"
+                    state.add_message("assistant", message)
+                    return {
+                        "status": "ready",
+                        "message": message,
+                        "stage": state.stage,
+                        "extraction": state.extraction.dict() if state.extraction else None,
+                    }
+                # Change the memory story and re-enter details
+                if self._user_wants_change_story(user_message):
+                    state.extraction = None
+                    state.stage = "collecting"
+                    message = "No problem. Tell me what you'd like to change about your memory (who, what, when, where)."
+                    state.add_message("assistant", message)
+                    return {
+                        "status": "collecting",
+                        "message": message,
+                        "stage": "collecting",
+                    }
+                # Edit the generated image
                 return await self._process_edit_request(user_id, session_id, state, user_message)
             
             # If in unexpected state
@@ -437,7 +471,8 @@ class MemoryTeam:
         user_id: str,
         session_id: str,
         state: ConversationState,
-        memory_id: Optional[str] = None
+        memory_id: Optional[str] = None,
+        message: Optional[str] = None
     ) -> Dict:
         """
         Start Google Photos Picker flow: create a session and return picker_uri for the user.
@@ -449,9 +484,13 @@ class MemoryTeam:
             session = picker.create_session(max_items=8)
             picker_uri = (session.get("pickerUri") or "").rstrip("/") + "/autoclose"
             state.stage = "selecting_references"
+            display_message = message or (
+                "Open Google Photos to choose reference photos that will guide the image. "
+                "When you're done selecting, return here and click \"I've finished selecting\"."
+            )
             return {
                 "status": "selecting_references",
-                "message": "Open Google Photos to choose reference photos that will guide the image. When you're done selecting, return here and click \"I've finished selecting\".",
+                "message": display_message,
                 "stage": "selecting_references",
                 "picker_uri": picker_uri,
                 "picker_session_id": session.get("id"),
@@ -476,6 +515,65 @@ class MemoryTeam:
                 "stage": "search_failed",
             }
     
+    async def store_reference_selection(
+        self,
+        session_id: str,
+        user_id: str,
+        selected_photo_ids: List[str],
+        reference_photo_urls: Optional[List[str]] = None
+    ) -> Dict:
+        """
+        Store reference photo selection and return reference_photos for display.
+        Does NOT run generation - call process_screening after to generate.
+        """
+        try:
+            state = self.get_session_state(session_id)
+            if state.stage != "selecting_references":
+                return {
+                    "status": "error",
+                    "message": "Not currently in reference selection stage",
+                    "stage": state.stage
+                }
+            state.selected_reference_ids = selected_photo_ids
+            state.selected_reference_urls = reference_photo_urls or []
+            state.stage = "ready_to_generate"
+            logger.info(
+                "reference_photos_stored",
+                session_id=session_id,
+                selected_count=len(selected_photo_ids)
+            )
+            return {
+                "status": "ready",
+                "message": "Here are your reference photos. Add any context about them below, then click Generate when ready.",
+                "stage": "ready_to_generate",
+                "reference_photos": [
+                    {"media_item_id": selected_photo_ids[i] if i < len(selected_photo_ids) else str(i), "index": i}
+                    for i in range(len(state.selected_reference_urls))
+                ],
+            }
+        except Exception as e:
+            logger.error("store_reference_selection_error", error=str(e), session_id=session_id)
+            return {"status": "error", "message": str(e), "stage": "selecting_references"}
+
+    async def run_generation_from_stored_refs(
+        self,
+        user_id: str,
+        session_id: str,
+        memory_id: Optional[str] = None,
+        photo_context: Optional[str] = None
+    ) -> Dict:
+        """Run screening and generation using already-stored reference selection."""
+        state = self.get_session_state(session_id)
+        if state.stage != "ready_to_generate":
+            return {
+                "status": "error",
+                "message": "Reference selection not stored. Please select photos first.",
+                "stage": state.stage
+            }
+        state.photo_context = (photo_context or "").strip() or None
+        state.stage = "screening"
+        return await self._process_screening(user_id, session_id, state, memory_id)
+
     async def confirm_reference_selection(
         self,
         session_id: str,
@@ -611,6 +709,9 @@ High quality, detailed, realistic lighting."""
             if state.selected_reference_ids:
                 reference_note = f"\n\nReference photos selected: {len(state.selected_reference_ids)} photos to guide style, people, and setting."
                 generation_prompt += reference_note
+            # Add optional user context about the photos
+            if state.photo_context:
+                generation_prompt += f"\n\nUser notes about the reference photos: {state.photo_context}"
             
             # Fetch reference image bytes (Picker baseUrl needs OAuth + dimension params)
             reference_image_bytes: Optional[List[bytes]] = None

@@ -47,3 +47,8 @@ class ReferenceSelectionBody(BaseModel):
     """Body for reference photo selection (Picker or legacy)."""
     selected_photo_ids: List[str] = Field(default_factory=list)
     reference_photo_urls: Optional[List[str]] = None  # From Picker mediaItems.list (baseUrl)
+
+
+class GenerateFromReferencesBody(BaseModel):
+    """Body for triggering generation from stored references."""
+    additional_context: Optional[str] = None  # User notes about the reference photos
