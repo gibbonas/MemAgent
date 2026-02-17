@@ -51,9 +51,11 @@ app = FastAPI(
 # Configure CORS - Secure configuration using environment variables
 # IMPORTANT: In production, only allow your actual frontend domain(s)
 # Never use allow_origins=["*"] with allow_credentials=True
+# allow_origin_regex covers Vercel preview URLs (e.g. mem-agent-xyz123-team.vercel.app)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,  # Loaded from .env.local
+    allow_origins=settings.cors_origins,  # Loaded from env (e.g. https://mem-agent.vercel.app)
+    allow_origin_regex=r"https://mem-agent(-[a-zA-Z0-9-]+)?\.vercel\.app$",  # Vercel production + previews
     allow_credentials=True,  # Required for OAuth cookies/sessions
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods only
     allow_headers=["*"],  # Can be restricted further in production
