@@ -1,0 +1,17 @@
+# Used when building backend: docker build -f backend/Dockerfile .
+# Reduces context size and avoids copying frontend/node_modules, etc.
+.git
+.github
+frontend
+*.md
+.env*
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+*.db
+backend/.venv
+backend/__pycache__
+backend/*.db

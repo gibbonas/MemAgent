@@ -5,7 +5,7 @@ Loads environment variables and provides application settings using Pydantic.
 All ports have been standardized: Frontend=3002, Backend=8000
 """
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,8 +25,18 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = Field(default="dev-secret-key-change-in-production", description="Secret key for session management")
     
-    # CORS
+    # CORS (env: comma-separated or JSON array)
     cors_origins: list[str] = Field(default=["http://localhost:3002", "http://localhost:8000"], description="Allowed CORS origins")
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
+    
+    # Backend public URL (for OAuth redirect and image URLs; no trailing slash)
+    backend_url: str = Field(default="http://localhost:8000", description="Public URL of this API (OAuth callback, image links)")
     
     # Frontend URL
     frontend_url: str = Field(default="http://localhost:3002", description="Frontend application URL for OAuth redirects")
@@ -46,7 +56,7 @@ class Settings(BaseSettings):
     temp_image_dir: str = Field(default="./tmp/images", description="Directory for temporary image storage")
     
     model_config = SettingsConfigDict(
-        env_file="../.env.local",  # Load from project root
+        env_file=[".env.local", "../.env.local"],  # Try backend dir then project root; production uses env vars only
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"

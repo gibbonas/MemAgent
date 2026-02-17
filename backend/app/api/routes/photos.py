@@ -416,7 +416,7 @@ async def select_reference_photos(
         if result.get("image_path"):
             import os
             filename = os.path.basename(result.get("image_path"))
-            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}"
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}"
         
         if result.get("google_photos_url"):
             metadata["google_photos_url"] = result.get("google_photos_url")

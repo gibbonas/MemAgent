@@ -39,8 +39,12 @@ class OAuthManager:
         'https://www.googleapis.com/auth/userinfo.profile'
     ]
     
-    REDIRECT_URI = "http://localhost:8000/api/auth/callback"
-    
+    @property
+    def redirect_uri(self) -> str:
+        """OAuth callback URL (backend). Uses BACKEND_URL from settings."""
+        base = settings.backend_url.rstrip("/")
+        return f"{base}/api/auth/callback"
+
     def __init__(self):
         """Initialize OAuth manager."""
         self.client_config = {
@@ -49,7 +53,7 @@ class OAuthManager:
                 "client_secret": settings.google_auth_client_secret,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [self.REDIRECT_URI]
+                "redirect_uris": [self.redirect_uri]
             }
         }
     
@@ -66,7 +70,7 @@ class OAuthManager:
         flow = Flow.from_client_config(
             self.client_config,
             scopes=self.SCOPES,
-            redirect_uri=self.REDIRECT_URI
+            redirect_uri=self.redirect_uri
         )
         
         auth_url, _ = flow.authorization_url(
@@ -98,7 +102,7 @@ class OAuthManager:
             flow = Flow.from_client_config(
                 self.client_config,
                 scopes=self.SCOPES,
-                redirect_uri=self.REDIRECT_URI
+                redirect_uri=self.redirect_uri
             )
             
             flow.fetch_token(code=code)

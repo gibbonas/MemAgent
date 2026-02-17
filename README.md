@@ -113,8 +113,12 @@ DATABASE_URL=sqlite+aiosqlite:///./memagent.db
 # Security
 SECRET_KEY=generate_a_random_secret_key
 
-# CORS
+# CORS (production: add your Vercel/frontend URL)
 CORS_ORIGINS=http://localhost:3002,http://localhost:8000
+
+# Production only (for OAuth and image URLs when frontend/backend are split)
+# BACKEND_URL=https://your-api.example.com
+# FRONTEND_URL=https://your-app.vercel.app
 
 # Logging
 LOG_LEVEL=INFO
@@ -264,21 +268,24 @@ uv run pytest
 
 ## Production Deployment
 
-### Option 1: Google Cloud Run (Recommended)
+**Frontend (Vercel) and backend (separate host):** See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for deploying the frontend to Vercel and the backend separately from this single repo (monorepo). No need to split the repository.
+
+### Option 1: Google Cloud Run (Backend)
 - Natural fit with Google Photos API
 - Auto-scaling and managed infrastructure
 - Cloud SQL for PostgreSQL
 
-### Option 2: Docker Compose
+### Option 2: Docker Compose (local or single host)
 ```bash
 docker-compose up -d
 ```
 
 ### Environment Variables for Production
 - Use strong `SECRET_KEY`
+- Set `BACKEND_URL` (public API URL) and `FRONTEND_URL` (Vercel or custom domain)
+- Set `CORS_ORIGINS` to your frontend URL(s)
 - Enable HTTPS
 - Use PostgreSQL instead of SQLite
-- Set appropriate CORS origins
 - Enable encryption for OAuth tokens
 - Configure proper logging/monitoring
 

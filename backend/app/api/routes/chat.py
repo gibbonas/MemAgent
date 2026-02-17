@@ -13,6 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.team import MemoryTeam, create_memory_team
+from app.config import settings
 from app.core.llm_errors import is_retryable_llm_error, parse_llm_error
 from app.core.monitoring import logger
 from app.core.security import OAuthManager
@@ -121,7 +122,7 @@ async def send_message(
             import time
             filename = os.path.basename(result.get("image_path"))
             # Add cache-busting so browser fetches updated image after edits (filename has timestamp; extra safety)
-            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
         
         # Add Google Photos URL if available
         if result.get("google_photos_url"):
@@ -339,7 +340,7 @@ async def generate_from_references(
             import os
             import time
             filename = os.path.basename(result.get("image_path"))
-            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
         if result.get("google_photos_url"):
             metadata["google_photos_url"] = result.get("google_photos_url")
         if result.get("extraction"):
@@ -413,7 +414,7 @@ async def select_reference_photos(
             import os
             import time
             filename = os.path.basename(result.get("image_path"))
-            metadata["image_url"] = f"http://localhost:8000/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
         
         if result.get("google_photos_url"):
             metadata["google_photos_url"] = result.get("google_photos_url")
