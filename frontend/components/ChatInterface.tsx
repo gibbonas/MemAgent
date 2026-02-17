@@ -308,7 +308,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
         if (session.media_items_set) {
           const { media_items } = await listPickerMedia(userId, pickerSessionId)
           const ids = media_items.map((m: { media_item_id: string }) => m.media_item_id)
-          const urls = media_items.map((m: { url: string }) => m.url).filter(Boolean)
+          const urls = media_items.map((m) => m.url).filter((u): u is string => Boolean(u))
           const storeResponse = await storeReferencePhotos(userId, sessionId, ids, urls)
           setMessages((prev) => [
             ...prev,

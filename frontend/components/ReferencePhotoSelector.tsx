@@ -6,11 +6,12 @@ import { format } from 'date-fns'
 
 interface ReferencePhoto {
   media_item_id: string
-  thumbnail_url: string
-  url: string
-  creation_time: string | null
-  description: string | null
-  relevance_score: number
+  thumbnail_url?: string
+  thumbnail_data_url?: string
+  url?: string
+  creation_time?: string | null
+  description?: string | null
+  relevance_score?: number
 }
 
 interface ReferencePhotoSelectorProps {
@@ -66,7 +67,7 @@ export default function ReferencePhotoSelector({
             } ${loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
           >
             <img
-              src={photo.thumbnail_url || photo.url}
+              src={photo.thumbnail_data_url || photo.thumbnail_url || photo.url || ''}
               alt={photo.description || 'Reference photo'}
               className="w-full h-full object-cover"
               loading="lazy"
