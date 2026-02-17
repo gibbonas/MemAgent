@@ -5,6 +5,8 @@ Loads environment variables and provides application settings using Pydantic.
 All ports have been standardized: Frontend=3002, Backend=8000
 """
 
+import json
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,8 +33,23 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
+        if v is None:
+            return ["http://localhost:3002", "http://localhost:8000"]
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
         if isinstance(v, str):
-            return [x.strip() for x in v.split(",") if x.strip()]
+            s = v.strip()
+            if not s:
+                return ["http://localhost:3002", "http://localhost:8000"]
+            # JSON array: ["https://a.com","https://b.com"]
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+                except json.JSONDecodeError:
+                    pass
+            # Comma-separated: https://a.com,https://b.com
+            return [x.strip() for x in s.split(",") if x.strip()]
         return v
     
     # Backend public URL (for OAuth redirect and image URLs; no trailing slash)
