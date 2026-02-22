@@ -522,12 +522,12 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
                       ))}
                     </div>
                     {message.metadata?.stage === 'ready_to_generate' && (
-                      <div className="mt-3 space-y-2">
+                      <div className="mt-3 space-y-2 chat-input-fixed">
                         <textarea
                           value={photoContext}
                           onChange={(e) => setPhotoContext(e.target.value)}
                           placeholder="Add any context about these photos (e.g. describe them, lighting preferences)..."
-                          className="w-full px-3 py-2 text-sm bg-white text-gray-900 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none placeholder:text-gray-500"
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                           rows={3}
                           disabled={loading}
                         />
@@ -657,8 +657,8 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="border-t border-gray-200 p-4 bg-gray-50">
+      {/* Input - chat-input-fixed forces dark text on light bg in dark theme (Android Chrome) */}
+      <div className="border-t border-gray-200 p-4 bg-gray-50 chat-input-fixed">
         <div className="flex items-end space-x-3">
           <textarea
             value={input}
@@ -673,7 +673,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
             }
             disabled={loading || selectingReferences}
             rows={4}
-            className="flex-1 px-4 py-3 bg-white text-gray-900 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 resize-none font-sans placeholder:text-gray-500"
+            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 resize-none font-sans"
           />
           <button
             onClick={handleSend}

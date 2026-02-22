@@ -25,3 +25,15 @@ body {
     )
     rgb(var(--background-start-rgb));
 }
+
+/* Force chat input and textarea to always show dark text on light background (fixes invisible text in dark theme on Android Chrome) */
+.chat-input-fixed,
+.chat-input-fixed textarea {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+.chat-input-fixed textarea::placeholder {
+  color: #6b7280 !important;
+  opacity: 1;
+}
