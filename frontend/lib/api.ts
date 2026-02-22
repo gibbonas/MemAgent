@@ -1,6 +1,7 @@
 /**
  * Frontend API client for MemAgent backend.
- * All requests use NEXT_PUBLIC_API_URL (set in Vercel env or .env.local).
+ * Auth: JWT in httpOnly cookie (credentials: 'include').
+ * All requests use NEXT_PUBLIC_API_URL.
  */
 
 const getBaseUrl = () =>
@@ -21,12 +22,39 @@ export function initiateGooglePhotosConnect(userId: string, returnPath: string =
   window.location.href = `${getBaseUrl()}/api/auth/google/photos?${params.toString()}`
 }
 
-export async function getAuthStatus(userId: string): Promise<{ authenticated: boolean; email?: string; expires_at?: string }> {
-  const res = await fetch(`${getBaseUrl()}/api/auth/status?user_id=${encodeURIComponent(userId)}`, {
+export interface AuthStatusResponse {
+  authenticated: boolean
+  user_id?: string
+  email?: string
+  expires_at?: string
+}
+
+export async function getAuthStatus(): Promise<AuthStatusResponse> {
+  const res = await fetch(`${getBaseUrl()}/api/auth/status`, {
     credentials: 'include',
   })
   if (!res.ok) return { authenticated: false }
   return res.json()
+}
+
+export async function getAssetToken(): Promise<string> {
+  const res = await fetch(`${getBaseUrl()}/api/auth/asset-token`, {
+    credentials: 'include',
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.detail || res.statusText)
+  return data.token as string
+}
+
+export async function logout(): Promise<void> {
+  const res = await fetch(`${getBaseUrl()}/api/auth/logout`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail || res.statusText)
+  }
 }
 
 // --- Chat ---
@@ -40,19 +68,15 @@ export interface SendMessageResponse {
 }
 
 export async function sendMessage(
-  userId: string,
   sessionId: string,
   message: string
 ): Promise<SendMessageResponse> {
-  const res = await fetch(
-    `${getBaseUrl()}/api/chat/message?user_id=${encodeURIComponent(userId)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ message, session_id: sessionId }),
-    }
-  )
+  const res = await fetch(`${getBaseUrl()}/api/chat/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ message, session_id: sessionId }),
+  })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const err = new Error(data.detail || res.statusText) as Error & { response?: { status: number; data?: unknown } }
@@ -62,25 +86,21 @@ export async function sendMessage(
   return data
 }
 
-export async function createSession(userId: string): Promise<{ session_id: string; user_id: string; created_at?: string }> {
-  const res = await fetch(
-    `${getBaseUrl()}/api/chat/sessions?user_id=${encodeURIComponent(userId)}`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    }
-  )
+export async function createSession(): Promise<{ session_id: string; user_id: string; created_at?: string }> {
+  const res = await fetch(`${getBaseUrl()}/api/chat/sessions`, {
+    method: 'POST',
+    credentials: 'include',
+  })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.detail || res.statusText)
   return data
 }
 
 export async function getSession(
-  sessionId: string,
-  userId: string
+  sessionId: string
 ): Promise<{ session_id: string; user_id: string; messages?: Array<{ id?: string; role: string; content: string; timestamp?: string; metadata?: unknown }> }> {
   const res = await fetch(
-    `${getBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}?user_id=${encodeURIComponent(userId)}`,
+    `${getBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}`,
     { credentials: 'include' }
   )
   const data = await res.json().catch(() => ({}))
@@ -91,13 +111,12 @@ export async function getSession(
 // --- Reference photos (Picker + select/store/generate) ---
 
 export async function selectReferencePhotos(
-  userId: string,
   sessionId: string,
   selectedPhotoIds: string[],
   referencePhotoUrls?: string[]
 ): Promise<SendMessageResponse> {
   const res = await fetch(
-    `${getBaseUrl()}/api/chat/references/select?user_id=${encodeURIComponent(userId)}&session_id=${encodeURIComponent(sessionId)}`,
+    `${getBaseUrl()}/api/chat/references/select?session_id=${encodeURIComponent(sessionId)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -118,13 +137,12 @@ export async function selectReferencePhotos(
 }
 
 export async function storeReferencePhotos(
-  userId: string,
   sessionId: string,
   selectedPhotoIds: string[],
   referencePhotoUrls?: string[]
 ): Promise<SendMessageResponse> {
   const res = await fetch(
-    `${getBaseUrl()}/api/chat/references/store?user_id=${encodeURIComponent(userId)}&session_id=${encodeURIComponent(sessionId)}`,
+    `${getBaseUrl()}/api/chat/references/store?session_id=${encodeURIComponent(sessionId)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -145,12 +163,11 @@ export async function storeReferencePhotos(
 }
 
 export async function generateFromReferences(
-  userId: string,
   sessionId: string,
   additionalContext?: string
 ): Promise<SendMessageResponse> {
   const res = await fetch(
-    `${getBaseUrl()}/api/chat/references/generate?user_id=${encodeURIComponent(userId)}&session_id=${encodeURIComponent(sessionId)}`,
+    `${getBaseUrl()}/api/chat/references/generate?session_id=${encodeURIComponent(sessionId)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -170,7 +187,6 @@ export async function generateFromReferences(
 // --- Picker ---
 
 export async function getPickerSession(
-  userId: string,
   pickerSessionId: string
 ): Promise<{
   picker_session_id: string
@@ -179,7 +195,7 @@ export async function getPickerSession(
   polling_interval_seconds?: number
 }> {
   const res = await fetch(
-    `${getBaseUrl()}/api/photos/picker/session/${encodeURIComponent(pickerSessionId)}?user_id=${encodeURIComponent(userId)}`,
+    `${getBaseUrl()}/api/photos/picker/session/${encodeURIComponent(pickerSessionId)}`,
     { credentials: 'include' }
   )
   const data = await res.json().catch(() => ({}))
@@ -188,7 +204,6 @@ export async function getPickerSession(
 }
 
 export async function listPickerMedia(
-  userId: string,
   pickerSessionId: string,
   pageSize: number = 50
 ): Promise<{
@@ -201,7 +216,7 @@ export async function listPickerMedia(
   next_page_token?: string
 }> {
   const res = await fetch(
-    `${getBaseUrl()}/api/photos/picker/session/${encodeURIComponent(pickerSessionId)}/media?user_id=${encodeURIComponent(userId)}&page_size=${pageSize}`,
+    `${getBaseUrl()}/api/photos/picker/session/${encodeURIComponent(pickerSessionId)}/media?page_size=${pageSize}`,
     { credentials: 'include' }
   )
   const data = await res.json().catch(() => ({}))
@@ -212,11 +227,10 @@ export async function listPickerMedia(
 // --- Images & Google Photos ---
 
 export async function saveToGooglePhotos(
-  userId: string,
   imageFilename: string
 ): Promise<{ status: string; google_photos_url?: string; media_item_id?: string }> {
   const res = await fetch(
-    `${getBaseUrl()}/api/photos/save-to-google-photos?user_id=${encodeURIComponent(userId)}&image_filename=${encodeURIComponent(imageFilename)}`,
+    `${getBaseUrl()}/api/photos/save-to-google-photos?image_filename=${encodeURIComponent(imageFilename)}`,
     { method: 'POST', credentials: 'include' }
   )
   const data = await res.json().catch(() => ({}))
@@ -225,7 +239,7 @@ export async function saveToGooglePhotos(
 }
 
 /**
- * Extract image filename from a backend image URL (e.g. .../images/memory_xxx_123.jpg?user_id=...).
+ * Extract image filename from a backend image URL (path only; query may be token=...).
  */
 export function getImageFilenameFromUrl(imageUrl: string | undefined): string | null {
   if (!imageUrl) return null
@@ -240,8 +254,8 @@ export function getImageFilenameFromUrl(imageUrl: string | undefined): string | 
 }
 
 /**
- * URL for the backend reference-thumbnail proxy (requires user_id and session_id for auth).
+ * URL for the backend reference-thumbnail proxy. Uses short-lived token (from getAssetToken) for img src.
  */
-export function getReferenceThumbnailUrl(userId: string, sessionId: string, index: number): string {
-  return `${getBaseUrl()}/api/chat/reference-thumbnail?user_id=${encodeURIComponent(userId)}&session_id=${encodeURIComponent(sessionId)}&index=${index}`
+export function getReferenceThumbnailUrl(sessionId: string, index: number, token: string): string {
+  return `${getBaseUrl()}/api/chat/reference-thumbnail?session_id=${encodeURIComponent(sessionId)}&index=${index}&token=${encodeURIComponent(token)}`
 }

@@ -18,7 +18,7 @@ from app.config import settings
 from app.core.monitoring import logger
 from app.core.security import OAuthManager
 from app.core.token_tracker import TokenTracker
-from app.deps import get_db
+from app.deps import get_db, get_current_user, get_user_id_for_asset, CurrentUser
 from app.schemas.photo import PhotoSuggestion
 from app.storage.models import Memory
 from app.tools.exif_writer import EXIFWriter
@@ -41,7 +41,7 @@ def _parse_poll_interval(duration_str: str) -> int:
 
 @router.post("/picker/session")
 async def create_picker_session(
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     max_items: int = Query(8, ge=1, le=20),
     db: AsyncSession = Depends(get_db)
 ):
@@ -49,6 +49,7 @@ async def create_picker_session(
     Create a Picker session so the user can select reference photos in Google Photos.
     Returns picker_uri (open in new tab) and picker_session_id for polling.
     """
+    user_id = current_user.user_id
     try:
         credentials = await oauth_manager.get_credentials(user_id, db)
         if not credentials:
@@ -80,10 +81,11 @@ async def create_picker_session(
 @router.get("/picker/session/{session_id}")
 async def get_picker_session(
     session_id: str,
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Poll Picker session status. When media_items_set is true, call list media and then select-references."""
+    user_id = current_user.user_id
     try:
         credentials = await oauth_manager.get_credentials(user_id, db)
         if not credentials:
@@ -106,11 +108,12 @@ async def get_picker_session(
 @router.get("/picker/session/{session_id}/media")
 async def list_picker_media(
     session_id: str,
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     page_size: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
     """List media items picked in this session. Call only after media_items_set is true."""
+    user_id = current_user.user_id
     try:
         credentials = await oauth_manager.get_credentials(user_id, db)
         if not credentials:
@@ -138,10 +141,11 @@ async def list_picker_media(
 @router.delete("/picker/session/{session_id}")
 async def delete_picker_session(
     session_id: str,
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a Picker session to free resources (optional, recommended after use)."""
+    user_id = current_user.user_id
     try:
         credentials = await oauth_manager.get_credentials(user_id, db)
         if not credentials:
@@ -159,18 +163,13 @@ async def delete_picker_session(
 @router.get("/images/{image_filename}")
 async def serve_generated_image(
     image_filename: str,
-    user_id: str = Query(..., description="User ID for authentication"),
     download: int = Query(0, description="If 1, serve with Content-Disposition: attachment to trigger download"),
+    user_id: str = Depends(get_user_id_for_asset),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Serve a generated image file with authentication.
-    
-    This endpoint serves images from the temporary storage directory.
-    Only the user who owns the image can access it.
-    Add ?download=1 to force the browser to download the file instead of displaying it.
-    
-    Image filename format: memory_{user_id}_{timestamp}.jpg
+    Auth via token query param (short-lived asset token) or JWT cookie/header.
     """
     try:
         # Sanitize filename to prevent directory traversal
@@ -225,12 +224,13 @@ async def serve_generated_image(
 @router.post("/save-to-google-photos")
 async def save_image_to_google_photos(
     image_filename: str = Query(..., description="Filename of the image to save (e.g. memory_xxx_123.jpg)"),
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload the generated memory image to the user's Google Photos library.
     """
+    user_id = current_user.user_id
     try:
         if ".." in image_filename or "/" in image_filename or "\\" in image_filename:
             raise HTTPException(status_code=400, detail="Invalid filename")
@@ -258,7 +258,7 @@ async def save_image_to_google_photos(
 
 @router.get("/suggestions", response_model=List[PhotoSuggestion])
 async def get_photo_suggestions(
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     start_date: str = Query(None),
     end_date: str = Query(None),
     db: AsyncSession = Depends(get_db)
@@ -268,6 +268,7 @@ async def get_photo_suggestions(
     
     Returns URLs and metadata only (NO image bytes).
     """
+    user_id = current_user.user_id
     try:
         # Get user's OAuth credentials
         credentials = await oauth_manager.get_credentials(user_id, db)
@@ -304,7 +305,7 @@ async def get_photo_suggestions(
 
 @router.get("/memories")
 async def list_memories(
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
@@ -312,6 +313,7 @@ async def list_memories(
     """
     List user's saved memories.
     """
+    user_id = current_user.user_id
     try:
         try:
             user_uuid = uuid_lib.UUID(user_id)
@@ -353,7 +355,7 @@ async def list_memories(
 
 @router.post("/upload")
 async def upload_photo(
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -367,20 +369,13 @@ async def upload_photo(
 async def select_reference_photos(
     selected_photo_ids: List[str] = Body(...),
     session_id: str = Query(...),
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Submit selected reference photos and continue to image generation.
-    
-    Args:
-        selected_photo_ids: List of selected Google Photos media item IDs (in request body)
-        session_id: Chat session ID
-        user_id: User ID
-        
-    Returns:
-        Result of continuing the pipeline with selected references
     """
+    user_id = current_user.user_id
     try:
         # Get user's OAuth credentials
         credentials = await oauth_manager.get_credentials(user_id, db)
@@ -412,11 +407,13 @@ async def select_reference_photos(
             "stage": result.get("stage")
         }
         
-        # Add image info if generation completed
+        # Add image info if generation completed (use asset token for img src)
         if result.get("image_path"):
             import os
+            from app.core.jwt_utils import create_asset_token
             filename = os.path.basename(result.get("image_path"))
-            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}"
+            asset_token = create_asset_token(user_id)
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?token={asset_token}"
         
         if result.get("google_photos_url"):
             metadata["google_photos_url"] = result.get("google_photos_url")

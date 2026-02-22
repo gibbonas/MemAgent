@@ -14,11 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.team import MemoryTeam, create_memory_team
 from app.config import settings
+from app.core.jwt_utils import create_asset_token
 from app.core.llm_errors import is_retryable_llm_error, parse_llm_error
 from app.core.monitoring import logger
 from app.core.security import OAuthManager
 from app.core.token_tracker import TokenTracker
-from app.deps import get_db
+from app.deps import get_db, get_current_user, get_user_id_for_asset, CurrentUser
 from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ReferenceSelectionBody, GenerateFromReferencesBody
 from app.tools.google_photos import GooglePhotosClient
 
@@ -37,7 +38,7 @@ _team_cache: Dict[str, MemoryTeam] = {}
 @router.post("/message", response_model=ChatMessageResponse)
 async def send_message(
     request: ChatMessageRequest,
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -45,6 +46,7 @@ async def send_message(
     
     This endpoint handles the conversation flow with the multi-agent system.
     """
+    user_id = current_user.user_id
     try:
         # Get user's OAuth credentials
         credentials = await oauth_manager.get_credentials(user_id, db)
@@ -116,13 +118,13 @@ async def send_message(
         if result.get("requires_reauth"):
             metadata["requires_reauth"] = True
         
-        # Add image info if available - convert local path to backend URL with user_id for auth
+        # Add image info if available - use short-lived asset token for img src (cross-origin)
         if result.get("image_path"):
             import os
             import time
             filename = os.path.basename(result.get("image_path"))
-            # Add cache-busting so browser fetches updated image after edits (filename has timestamp; extra safety)
-            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
+            asset_token = create_asset_token(user_id)
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?token={asset_token}&t={int(time.time())}"
         
         # Add Google Photos URL if available
         if result.get("google_photos_url"):
@@ -152,7 +154,7 @@ async def send_message(
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: str,
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -163,20 +165,21 @@ async def get_session(
     # TODO: Implement session history retrieval from Agno storage
     return {
         "session_id": session_id,
-        "user_id": user_id,
+        "user_id": current_user.user_id,
         "messages": []
     }
 
 
 @router.post("/sessions")
 async def create_session(
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new chat session.
     """
     import time
+    user_id = current_user.user_id
     session_id = f"session_{user_id}_{int(time.time())}"
     
     logger.info("chat_session_created", session_id=session_id, user_id=user_id)
@@ -190,14 +193,14 @@ async def create_session(
 
 @router.get("/reference-thumbnail")
 async def get_reference_thumbnail(
-    user_id: str = Query(...),
     session_id: str = Query(...),
     index: int = Query(..., ge=0),
+    user_id: str = Depends(get_user_id_for_asset),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Proxy Google Photos reference thumbnail. Fetches with user's OAuth and returns image bytes.
-    Used for displaying reference photo thumbnails (Google baseUrl requires auth).
+    Auth via token query param (short-lived asset token) or JWT cookie/header.
     """
     try:
         if user_id not in _team_cache:
@@ -248,13 +251,14 @@ async def _fetch_thumbnail_as_data_url(url: str, token: str) -> Optional[str]:
 async def store_reference_photos(
     body: ReferenceSelectionBody,
     session_id: str = Query(...),
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Store reference photo selection and return reference_photos for display.
     Call /references/generate next to run generation.
     """
+    user_id = current_user.user_id
     try:
         credentials = await oauth_manager.get_credentials(user_id, db)
         if not credentials:
@@ -303,10 +307,11 @@ async def store_reference_photos(
 async def generate_from_references(
     body: Optional[GenerateFromReferencesBody] = Body(default=None),
     session_id: str = Query(...),
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Run screening and generation using stored reference selection."""
+    user_id = current_user.user_id
     try:
         credentials = await oauth_manager.get_credentials(user_id, db)
         if not credentials:
@@ -340,7 +345,8 @@ async def generate_from_references(
             import os
             import time
             filename = os.path.basename(result.get("image_path"))
-            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
+            asset_token = create_asset_token(user_id)
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?token={asset_token}&t={int(time.time())}"
         if result.get("google_photos_url"):
             metadata["google_photos_url"] = result.get("google_photos_url")
         if result.get("extraction"):
@@ -362,7 +368,7 @@ async def generate_from_references(
 async def select_reference_photos(
     body: ReferenceSelectionBody,
     session_id: str = Query(...),
-    user_id: str = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -370,6 +376,7 @@ async def select_reference_photos(
     
     Body: selected_photo_ids (list), optional reference_photo_urls (from Picker).
     """
+    user_id = current_user.user_id
     try:
         credentials = await oauth_manager.get_credentials(user_id, db)
         if not credentials:
@@ -414,7 +421,8 @@ async def select_reference_photos(
             import os
             import time
             filename = os.path.basename(result.get("image_path"))
-            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?user_id={user_id}&t={int(time.time())}"
+            asset_token = create_asset_token(user_id)
+            metadata["image_url"] = f"{settings.backend_url.rstrip('/')}/api/photos/images/{filename}?token={asset_token}&t={int(time.time())}"
         
         if result.get("google_photos_url"):
             metadata["google_photos_url"] = result.get("google_photos_url")

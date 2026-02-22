@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { Camera, LogOut, User } from 'lucide-react'
 import ChatInterface from '@/components/ChatInterface'
 import AuthButton from '@/components/AuthButton'
-import { getAuthStatus } from '@/lib/api'
+import { getAuthStatus, logout as apiLogout } from '@/lib/api'
 
 function HomeContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -27,40 +27,26 @@ function HomeContent() {
   }, [searchParams])
 
   useEffect(() => {
-    // Add a small delay to ensure localStorage is ready
     const checkAuth = async () => {
-      // Log for debugging
-      console.log('Checking authentication status...')
-      const storedUserId = localStorage.getItem('user_id')
-      console.log('Stored user_id:', storedUserId)
-      
-      if (storedUserId) {
-        // Set authenticated immediately for better UX
-        setUserId(storedUserId)
-        setIsAuthenticated(true)
-        setLoading(false)
-        
-        // Verify with backend in the background
-        try {
-          const status = await getAuthStatus(storedUserId)
-          console.log('Auth status from backend:', status)
-          if (!status.authenticated) {
-            // Backend says not authenticated, clear local storage
-            console.warn('Backend says not authenticated, clearing storage')
-            localStorage.removeItem('user_id')
-            setIsAuthenticated(false)
-            setUserId(null)
-          }
-        } catch (error) {
-          // If backend check fails, keep user authenticated (optimistic)
-          console.warn('Could not verify auth status with backend, assuming authenticated', error)
+      try {
+        const status = await getAuthStatus()
+        if (status.authenticated && status.user_id) {
+          setUserId(status.user_id)
+          setIsAuthenticated(true)
+          localStorage.setItem('user_id', status.user_id)
+        } else {
+          setUserId(null)
+          setIsAuthenticated(false)
+          localStorage.removeItem('user_id')
         }
-      } else {
-        console.log('No user_id found in localStorage')
+      } catch {
+        setUserId(null)
+        setIsAuthenticated(false)
+        localStorage.removeItem('user_id')
+      } finally {
         setLoading(false)
       }
     }
-    
     checkAuth()
   }, [])
 
@@ -70,7 +56,12 @@ function HomeContent() {
     localStorage.setItem('user_id', newUserId)
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await apiLogout()
+    } catch {
+      // ignore
+    }
     setIsAuthenticated(false)
     setUserId(null)
     localStorage.removeItem('user_id')

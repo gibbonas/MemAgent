@@ -9,13 +9,18 @@ import secrets
 from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.jwt_utils import (
+    ACCESS_TOKEN_COOKIE_NAME,
+    create_access_token,
+    create_asset_token,
+)
 from app.core.monitoring import logger
 from app.core.security import OAuthManager
-from app.deps import get_db
+from app.deps import get_db, get_current_user, CurrentUser
 
 router = APIRouter()
 oauth_manager = OAuthManager()
@@ -82,50 +87,80 @@ async def google_callback(
     
     logger.info("oauth_callback_success", user_id=result["user_id"])
     
-    # Redirect to frontend with success
-    # In production, include user_id in a secure way (JWT, session, etc.)
-    return RedirectResponse(url=f"{settings.frontend_url}/auth/success?user_id={result['user_id']}")
+    # Issue JWT and set httpOnly cookie
+    access_token = create_access_token(result["user_id"], result.get("email"))
+    redirect_url = f"{settings.frontend_url}/auth/success?user_id={result['user_id']}"
+    response = RedirectResponse(url=redirect_url, status_code=302)
+    max_age = settings.jwt_expire_minutes * 60
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE_NAME,
+        value=access_token,
+        max_age=max_age,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=settings.backend_url.strip().lower().startswith("https"),
+    )
+    return response
 
 
 @router.get("/status")
 async def auth_status(
-    user_id: str = Query(...),
-    db: AsyncSession = Depends(get_db)
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Check authentication status for a user.
+    Check authentication status for the current user (from JWT).
     """
-    credentials = await oauth_manager.get_credentials(user_id, db)
+    credentials = await oauth_manager.get_credentials(current_user.user_id, db)
     
     if not credentials:
         return {"authenticated": False}
     
     # Safely get email from id_token if it exists
-    email = ""
-    if hasattr(credentials, 'id_token') and credentials.id_token:
+    email = current_user.email or ""
+    if not email and hasattr(credentials, 'id_token') and credentials.id_token:
         if isinstance(credentials.id_token, dict):
             email = credentials.id_token.get("email", "")
     
     return {
         "authenticated": True,
+        "user_id": current_user.user_id,
         "email": email,
         "expires_at": credentials.expiry.isoformat() if credentials.expiry else None
     }
 
 
+@router.get("/asset-token")
+async def get_asset_token(current_user: CurrentUser = Depends(get_current_user)):
+    """
+    Return a short-lived token for image/thumbnail URLs (img src cannot send cookies cross-origin).
+    """
+    token = create_asset_token(current_user.user_id)
+    return {"token": token}
+
+
 @router.post("/logout")
 async def logout(
-    user_id: str = Query(...),
-    db: AsyncSession = Depends(get_db)
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Revoke OAuth tokens and log out user.
+    Revoke OAuth tokens and clear auth cookie.
     """
-    success = await oauth_manager.revoke_tokens(user_id, db)
+    success = await oauth_manager.revoke_tokens(current_user.user_id, db)
     
     if not success:
         raise HTTPException(status_code=400, detail="Failed to revoke tokens")
     
-    logger.info("user_logged_out", user_id=user_id)
+    logger.info("user_logged_out", user_id=current_user.user_id)
     
-    return {"status": "logged_out"}
+    response = JSONResponse(content={"status": "logged_out"})
+    response.delete_cookie(
+        key=ACCESS_TOKEN_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=settings.backend_url.strip().lower().startswith("https"),
+    )
+    return response

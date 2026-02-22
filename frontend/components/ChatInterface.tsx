@@ -14,6 +14,7 @@ import {
   saveToGooglePhotos,
   getImageFilenameFromUrl,
   getReferenceThumbnailUrl,
+  getAssetToken,
   initiateGooglePhotosConnect,
 } from '@/lib/api'
 import { format } from 'date-fns'
@@ -59,6 +60,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   const [selectingReferences, setSelectingReferences] = useState(false)
   const [savingPhotoMessageId, setSavingPhotoMessageId] = useState<string | null>(null)
   const [photoContext, setPhotoContext] = useState('')
+  const [assetToken, setAssetToken] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const processedPickerSessionsRef = useRef<Set<string>>(new Set())
   const processingPickerSessionRef = useRef<string | null>(null)
@@ -66,6 +68,13 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   useEffect(() => {
     initializeSession()
   }, [userId])
+
+  useEffect(() => {
+    if (!sessionId) return
+    getAssetToken()
+      .then(setAssetToken)
+      .catch(() => {})
+  }, [sessionId])
 
   useEffect(() => {
     scrollToBottom()
@@ -76,7 +85,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       (m) => m.role === 'assistant' && m.metadata?.stage === 'selecting_references' && m.metadata?.picker_session_id
     )
     const pickerSessionId = pickerMsg?.metadata?.picker_session_id as string | undefined
-    if (!pickerSessionId || !userId || !sessionId || loading || processedPickerSessionsRef.current.has(pickerSessionId)) return
+    if (!pickerSessionId || !sessionId || loading || processedPickerSessionsRef.current.has(pickerSessionId)) return
 
     const pollIntervalMs = 3000
     const timeoutMs = 120000
@@ -85,7 +94,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       if (Date.now() - start > timeoutMs) return
       if (processingPickerSessionRef.current === pickerSessionId) return
       try {
-        const session = await getPickerSession(userId, pickerSessionId)
+        const session = await getPickerSession(pickerSessionId)
         if (session.media_items_set) {
           if (processingPickerSessionRef.current === pickerSessionId) return
           processingPickerSessionRef.current = pickerSessionId
@@ -116,7 +125,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       clearInterval(id)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [messages, userId, sessionId, loading])
+  }, [messages, sessionId, loading])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -130,7 +139,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       if (storedSessionId) {
         // Try to load existing session
         try {
-          const session = await getSession(storedSessionId, userId)
+          const session = await getSession(storedSessionId)
           setSessionId(storedSessionId)
           
           // Load message history if available
@@ -151,7 +160,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       }
       
       // Create new session
-      const session = await createSession(userId)
+      const session = await createSession()
       setSessionId(session.session_id)
       localStorage.setItem('session_id', session.session_id)
       
@@ -182,7 +191,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     setLoading(true)
 
     try {
-      const response = await sendMessage(userId, sessionId, userMessage.content)
+      const response = await sendMessage(sessionId, userMessage.content)
       
       const assistantMessage: Message = {
         id: response.message_id || Math.random().toString(36),
@@ -224,7 +233,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     setLoading(true)
 
     try {
-      const response = await selectReferencePhotos(userId, sessionId, selectedIds)
+      const response = await selectReferencePhotos(sessionId, selectedIds)
       
       const systemMessage: Message = {
         id: Math.random().toString(36),
@@ -256,11 +265,11 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   }
 
   const handleGenerateFromReferences = async (context: string) => {
-    if (!sessionId || !userId || loading) return
+    if (!sessionId || loading) return
     setLoading(true)
     setPhotoContext('')
     try {
-      const genResponse = await generateFromReferences(userId, sessionId, context)
+      const genResponse = await generateFromReferences(sessionId, context)
       setMessages((prev) => {
         const updated = prev.map((m) =>
           m.metadata?.stage === 'ready_to_generate'
@@ -296,7 +305,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   }
 
   const handlePickerFinished = async (pickerSessionId: string) => {
-    if (!sessionId || !userId) return
+    if (!sessionId) return
     setSelectingReferences(false)
     setLoading(true)
     const pollIntervalMs = 3000
@@ -304,12 +313,12 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     const start = Date.now()
     try {
       while (Date.now() - start < timeoutMs) {
-        const session = await getPickerSession(userId, pickerSessionId)
-        if (session.media_items_set) {
-          const { media_items } = await listPickerMedia(userId, pickerSessionId)
+        const session = await getPickerSession(pickerSessionId)
+          if (session.media_items_set) {
+          const { media_items } = await listPickerMedia(pickerSessionId)
           const ids = media_items.map((m: { media_item_id: string }) => m.media_item_id)
           const urls = media_items.map((m) => m.url).filter((u): u is string => Boolean(u))
-          const storeResponse = await storeReferencePhotos(userId, sessionId, ids, urls)
+          const storeResponse = await storeReferencePhotos(sessionId, ids, urls)
           setMessages((prev) => [
             ...prev,
             {
@@ -367,12 +376,11 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   }
 
   const handleSaveToGooglePhotos = async (imageUrl: string, messageId: string) => {
-    if (!userId) return
     const filename = getImageFilenameFromUrl(imageUrl)
     if (!filename) return
     setSavingPhotoMessageId(messageId)
     try {
-      const data = await saveToGooglePhotos(userId, filename)
+      const data = await saveToGooglePhotos(filename)
       if (data?.google_photos_url) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -511,7 +519,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
                       {message.metadata.reference_photos.map((photo: { media_item_id: string; index?: number; thumbnail_data_url?: string }) => (
                         <img
                           key={photo.media_item_id}
-                          src={photo.thumbnail_data_url ?? getReferenceThumbnailUrl(userId, sessionId, photo.index ?? 0)}
+                          src={photo.thumbnail_data_url ?? (assetToken && sessionId ? getReferenceThumbnailUrl(sessionId, photo.index ?? 0, assetToken) : '')}
                           alt="Reference"
                           className="w-16 h-16 rounded-lg object-cover border border-gray-200"
                           loading="lazy"

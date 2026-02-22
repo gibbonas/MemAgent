@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     
     # Security
     secret_key: str = Field(default="dev-secret-key-change-in-production", description="Secret key for session management")
+    jwt_expire_minutes: int = Field(default=60 * 24 * 7, description="JWT access token expiry in minutes (default 7 days)")
+    jwt_asset_token_expire_minutes: int = Field(default=5, description="Short-lived asset token expiry for image/thumbnail URLs")
     
     # CORS (env: comma-separated or JSON array)
     cors_origins: list[str] = Field(default=["http://localhost:3002", "http://localhost:8000"], description="Allowed CORS origins")
