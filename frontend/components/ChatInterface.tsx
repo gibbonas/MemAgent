@@ -527,7 +527,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
                           value={photoContext}
                           onChange={(e) => setPhotoContext(e.target.value)}
                           placeholder="Add any context about these photos (e.g. describe them, lighting preferences)..."
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                          className="w-full px-3 py-2 text-sm bg-white text-gray-900 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none placeholder:text-gray-500"
                           rows={3}
                           disabled={loading}
                         />
@@ -673,7 +673,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
             }
             disabled={loading || selectingReferences}
             rows={4}
-            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 resize-none font-sans"
+            className="flex-1 px-4 py-3 bg-white text-gray-900 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 resize-none font-sans placeholder:text-gray-500"
           />
           <button
             onClick={handleSend}

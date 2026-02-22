@@ -3,7 +3,7 @@ Memory Team Orchestrator - MemAgent
 
 Coordinates the multi-agent pipeline for memory preservation.
 
-Pipeline: Collector → Screener → Enricher → Generator → Manager
+Pipeline: Collector → Screener → Generator → Manager
 
 This orchestrator manages the workflow, handles errors, tracks token usage,
 maintains conversation state, and provides progress updates to the user.
@@ -24,7 +24,6 @@ from agno.team import Team
 
 from app.agents.base import get_gemini_model
 from app.agents.content_screener import create_content_screener_agent
-from app.agents.context_enricher import create_context_enricher_agent
 from app.agents.image_generator import create_image_generator_agent
 from app.agents.memory_collector import create_memory_collector_agent, parse_collected_memory
 from app.agents.photo_manager import create_photo_manager_agent
@@ -107,7 +106,6 @@ class MemoryTeam:
         # Initialize agents
         self.memory_collector = create_memory_collector_agent()
         self.content_screener = create_content_screener_agent()
-        self.context_enricher = create_context_enricher_agent(google_photos_client)
         self.image_generator_agent = create_image_generator_agent(self.image_generator)
         self.photo_manager = create_photo_manager_agent(
             self.exif_writer,

@@ -31,7 +31,6 @@ class TokenTracker:
     AGENT_BUDGETS = {
         "memory_collector": 2000,
         "content_screener": 500,
-        "context_enricher": 1500,
         "image_generator": 5000,
         "photo_manager": 500,
         "orchestrator": 1000,
