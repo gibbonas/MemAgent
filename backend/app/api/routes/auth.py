@@ -87,19 +87,21 @@ async def google_callback(
     
     logger.info("oauth_callback_success", user_id=result["user_id"])
     
-    # Issue JWT and set httpOnly cookie
+    # Issue JWT and set httpOnly cookie. SameSite=none so cookie is sent on cross-origin
+    # requests (frontend on Vercel -> backend on Railway); Secure required when SameSite=none.
     access_token = create_access_token(result["user_id"], result.get("email"))
     redirect_url = f"{settings.frontend_url}/auth/success?user_id={result['user_id']}"
     response = RedirectResponse(url=redirect_url, status_code=302)
     max_age = settings.jwt_expire_minutes * 60
+    is_https = settings.backend_url.strip().lower().startswith("https")
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE_NAME,
         value=access_token,
         max_age=max_age,
         path="/",
         httponly=True,
-        samesite="lax",
-        secure=settings.backend_url.strip().lower().startswith("https"),
+        samesite="none" if is_https else "lax",
+        secure=is_https,
     )
     return response
 
@@ -156,11 +158,12 @@ async def logout(
     logger.info("user_logged_out", user_id=current_user.user_id)
     
     response = JSONResponse(content={"status": "logged_out"})
+    is_https = settings.backend_url.strip().lower().startswith("https")
     response.delete_cookie(
         key=ACCESS_TOKEN_COOKIE_NAME,
         path="/",
         httponly=True,
-        samesite="lax",
-        secure=settings.backend_url.strip().lower().startswith("https"),
+        samesite="none" if is_https else "lax",
+        secure=is_https,
     )
     return response
